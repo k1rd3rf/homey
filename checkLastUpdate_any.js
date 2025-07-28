@@ -1,10 +1,19 @@
-// Version 0.6
-// Script checks devices based on the last updated time against a threshold
-// Focuses on temperature sensors and specified device classes but you can adjust it by changing FILTER OPTIONS
+// --- v0.7 additions ---
+// Adds battery-level monitoring for ANY devices (not just Zigbee):
+//   • Flags devices whose battery level is at/below BATTERY_THRESHOLD_PERCENT
+//   • Treats alarm_battery=true as low battery
+//   • Prints a "Batt" column alongside existing columns
+//   • Exposes LowBatteryDevices & lowBatteryCount as Flow tags
+//   • Extends returned text to include low-battery section
+// ---------------------------------------------
 
 // Constants
 const NOT_REPORTING_THRESHOLD_HOURS = 0.8; // 0.8 hours, which is 48 minutes
 const THRESHOLD_IN_MILLIS = NOT_REPORTING_THRESHOLD_HOURS * 3600000; // Convert hours to milliseconds
+
+// Battery Monitor Options
+const BATTERY_THRESHOLD_PERCENT = 30; // percent; devices at/below this are considered low battery
+const INCLUDE_BATTERY_ALARM_AS_LOW = true; // when true, alarm_battery=true marks device as low battery regardless of percentage
 
 // Filter Options
 const EXCLUDED_ZONES = ['Garage', 'Living Room']; // Add your zone names here (case-insensitive) to be  excluded
@@ -25,6 +34,10 @@ let nokDevices = [];
 // Overall tracking
 let DevicesNotReporting = [];
 let notReportingCount = 0;
+
+// Battery tracking
+let DevicesLowBattery = [];
+let lowBatteryCount = 0;
 
 // Fetch all devices and zones
 const devices = await Homey.devices.getDevices();
@@ -51,11 +64,12 @@ function formatDate(date) {
 
 // Simple right-padding function for column formatting
 function padRight(str, width) {
+  str = String(str);
   if (str.length >= width) return str.slice(0, width);
   return str + ' '.repeat(width - str.length);
 }
 
-// For each device, apply filters and check lastUpdated times
+// For each device, apply filters and check lastUpdated times + battery
 for (const device of Object.values(devices)) {
   // 1) Exclude certain driver URIs (virtual devices, app placeholders, etc.)
   if (device.driverUri && EXCLUDED_DRIVER_URI_PATTERN.test(device.driverUri)) continue;
@@ -73,13 +87,14 @@ for (const device of Object.values(devices)) {
 
   // 4) Exclude based on technology
   if (
-  (device.flags && EXCLUDED_FLAGS.some(flag => device.flags.includes(flag))) ||
-  (EXCLUDE_EMPTY_FLAGS && Array.isArray(device.flags) && (device.flags.length === 0 || device.flags.includes('lowBattery'))) ) continue;
+    (device.flags && EXCLUDED_FLAGS.some(flag => device.flags.includes(flag))) ||
+    (EXCLUDE_EMPTY_FLAGS && Array.isArray(device.flags) && (device.flags.length === 0 || device.flags.includes('lowBattery')))
+  ) continue;
 
   // We'll track the most recent (max) lastUpdated across all capabilities
   let maxLastUpdatedTime = null;
 
-  // Gather the latest lastUpdated
+  // Gather the latest lastUpdated across capabilities
   if (device.capabilitiesObj) {
     for (const capability of Object.values(device.capabilitiesObj)) {
       if (!capability.lastUpdated) continue;
@@ -100,12 +115,56 @@ for (const device of Object.values(devices)) {
     }
   }
 
+  // -------- Battery checks (added) --------
+  let batteryStr = 'N/A';
+  let isLowBattery = false;
+
+  // Check both measure_battery (%) and alarm_battery (boolean) when present
+  const caps = device.capabilities || [];
+  const capsObj = device.capabilitiesObj || {};
+
+  let measuredPct = undefined;
+  if (caps.includes('measure_battery')) {
+    const v = capsObj.measure_battery && typeof capsObj.measure_battery.value === 'number'
+      ? capsObj.measure_battery.value
+      : undefined;
+    if (typeof v === 'number' && !Number.isNaN(v)) {
+      measuredPct = v;
+      batteryStr = `${Math.round(v)}%`;
+      if (v <= BATTERY_THRESHOLD_PERCENT) {
+        isLowBattery = true;
+      }
+    }
+  }
+
+  if (caps.includes('alarm_battery')) {
+    const alarmVal = !!(capsObj.alarm_battery && capsObj.alarm_battery.value === true);
+    if (alarmVal && INCLUDE_BATTERY_ALARM_AS_LOW) {
+      isLowBattery = true;
+      // If there was no numeric measure, indicate alarm state explicitly
+      if (batteryStr === 'N/A') batteryStr = 'ALARM';
+    } else {
+      // If we have neither a % nor an active alarm, at least acknowledge capability
+      if (batteryStr === 'N/A') batteryStr = 'OK';
+    }
+  }
+
+  // If determined low-battery, track it
+  if (isLowBattery) {
+    lowBatteryCount++;
+    const lbDescriptor = (batteryStr !== 'N/A') ? batteryStr : (measuredPct !== undefined ? `${Math.round(measuredPct)}%` : 'LOW');
+    DevicesLowBattery.push(`${device.name} ${lbDescriptor}`);
+  }
+
+  // ----------------------------------------
+
   // Format the date from the maximum lastUpdated we found
   const lastUpdatedDate = maxLastUpdatedTime ? new Date(maxLastUpdatedTime) : null;
   const deviceInfo = {
     name: device.name,
     formattedDate: formatDate(lastUpdatedDate),
     class: device.class,
+    batt: batteryStr,                 // <-- added to printed output
     status: isReporting ? '(OK)' : '(NOK)'
   };
 
@@ -124,6 +183,7 @@ const totalDevices = okDevices.length + nokDevices.length;
 console.log(`${totalDevices} device(s) scanned.`);
 console.log(`OK:  ${okDevices.length}`);
 console.log(`NOK: ${nokDevices.length}`);
+console.log(`Low Battery (≤${BATTERY_THRESHOLD_PERCENT}%${INCLUDE_BATTERY_ALARM_AS_LOW ? ' or alarm' : ''}): ${lowBatteryCount}`);
 console.log('---------------------------------------------');
 
 // Prepare column headers
@@ -132,6 +192,7 @@ const header = [
   padRight('Device Name', 35),
   padRight('Last Updated', 20),
   padRight('Class', 10),
+  padRight('Batt', 6),
   padRight('Status', 6)
 ].join(' ');
 
@@ -143,6 +204,7 @@ function printRows(devArray) {
       padRight(row.name, 35),
       padRight(row.formattedDate, 20),
       padRight(row.class, 10),
+      padRight(row.batt, 6),
       padRight(row.status, 6)
     ].join(' ');
     console.log(line);
@@ -165,12 +227,25 @@ if (nokDevices.length > 0) {
   printRows(nokDevices);
 }
 
+// Print Low Battery devices (summary list)
+if (lowBatteryCount > 0) {
+  console.log(`\nLow-battery device(s) (≤${BATTERY_THRESHOLD_PERCENT}%${INCLUDE_BATTERY_ALARM_AS_LOW ? ' or alarm' : ''}): ${lowBatteryCount}`);
+  DevicesLowBattery.forEach((d, i) => console.log(`${i + 1}. ${d}`));
+}
+
 console.log('---------------------------------------------\n');
 
 // Output for script AND card
 await tag('InvalidatedDevices', DevicesNotReporting.join('\n'));
 await tag('notReportingCount', notReportingCount);
+// Added battery tags
+await tag('LowBatteryDevices', DevicesLowBattery.join('\n'));
+await tag('lowBatteryCount', lowBatteryCount);
 
 // Define a return value
-const myTag = `Not Reporting Count: ${notReportingCount}\nDevices Not Reporting:\n${DevicesNotReporting.join('\n')}`;
+const myTag =
+  `Not Reporting Count: ${notReportingCount}\n` +
+  `Low Battery Count:   ${lowBatteryCount}\n` +
+  `Devices Not Reporting:\n${DevicesNotReporting.join('\n')}` +
+  (DevicesLowBattery.length ? `\nDevices Low Battery:\n${DevicesLowBattery.join('\n')}` : '');
 return myTag;
