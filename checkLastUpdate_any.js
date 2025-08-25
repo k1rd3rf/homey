@@ -1,65 +1,76 @@
-// --- v0.7 additions ---
-// Adds battery-level monitoring for ANY devices (not just Zigbee):
-//   • Flags devices whose battery level is at/below BATTERY_THRESHOLD_PERCENT
-//   • Treats alarm_battery=true as low battery
-//   • Prints a "Batt" column alongside existing columns
-//   • Exposes LowBatteryDevices & lowBatteryCount as Flow tags
-//   • Extends returned text to include low-battery section
-// ---------------------------------------------
+// v0.8 — Any-device LastUpdated + Battery monitor
+// - NA/invalid lastUpdated ⇒ NOK with reason codes (“no updates”)
+// - Uses system/runtime time zone by default (universal); optional TIME_ZONE override
+// - Battery: measure_battery (<= threshold) and/or alarm_battery=true
+// - Tags: InvalidatedDevices, notReportingCount, LowBatteryDevices, lowBatteryCount
 
-// Constants
-const NOT_REPORTING_THRESHOLD_HOURS = 0.8; // 0.8 hours, which is 48 minutes
-const THRESHOLD_IN_MILLIS = NOT_REPORTING_THRESHOLD_HOURS * 3600000; // Convert hours to milliseconds
+// ───────────────────────── configurable ─────────────────────────
+const NOT_REPORTING_THRESHOLD_HOURS = 0.8; // 48 minutes
+const THRESHOLD_IN_MILLIS = NOT_REPORTING_THRESHOLD_HOURS * 3600000;
 
-// Battery Monitor Options
-const BATTERY_THRESHOLD_PERCENT = 30; // percent; devices at/below this are considered low battery
-const INCLUDE_BATTERY_ALARM_AS_LOW = true; // when true, alarm_battery=true marks device as low battery regardless of percentage
+const BATTERY_THRESHOLD_PERCENT = 30;
+const INCLUDE_BATTERY_ALARM_AS_LOW = true;
 
-// Filter Options
-const EXCLUDED_ZONES = ['Garage', 'Living Room']; // Add your zone names here (case-insensitive) to be  excluded
-const EXCLUDED_DRIVER_URI_PATTERN = /vdevice|nl\.qluster-it\.DeviceCapabilities|nl\.fellownet\.chronograph|net\.i-dev\.betterlogic|com\.swttt\.devicegroups|com\.gruijter\.callmebot|com\.netscan/i;
-const INCLUDED_DEVICE_NAME_REGEX = /.*/i; // Device names (case-insensitive) to be included
-// EXAMPLE to include ALL : const INCLUDED_DEVICE_NAME_REGEX = /.*/i;
-const EXCLUDED_DEVICE_NAME_PATTERN = /Flood|Netatmo Rain|Motion|Flora|Rear gate Vibration Sensor|Vibration Sensor Attic Doors/i;  // Device names (case-insensitive) to be excluded
-const INCLUDED_DEVICE_CLASS_REGEX = /sensor|button|remote|socket|lights|bulb/i; // Device types/classes (case-insensitive) to be included
-const EXCLUDED_FLAGS = ['']; // eg. to exclude ZWAVE and ZIGBEE - const EXCLUDED_FLAGS = ['zigbee','zwave'];. You can also set lowbattery, to exclude those devices with low battery state
-const EXCLUDE_EMPTY_FLAGS = false; // Set to true to exclude devices with empty flags (eg. OTHER then Zigbee / ZWAVE devices)
+// Optional time zone override (e.g., "Europe/Prague"). Leave null/'' to use system TZ.
+const TIME_ZONE = null;
 
-// -------------- don't modify anything below --------------------
+// Zones, drivers, names, classes
+const EXCLUDED_ZONES = ['Garage', 'Living Room']; // case-insensitive full-string match
+const EXCLUDED_DRIVER_URI_PATTERN =
+  /vdevice|nl\.qluster-it\.DeviceCapabilities|nl\.fellownet\.chronograph|net\.i-dev\.betterlogic|com\.swttt\.devicegroups|com\.gruijter\.callmebot|com\.netscan/i;
 
-// Prepare tracking arrays
+const INCLUDED_DEVICE_NAME_REGEX = /.*/i; // include all by default
+const EXCLUDED_DEVICE_NAME_PATTERN =
+  /Flood|Netatmo Rain|Motion|Flora|Rear gate Vibration Sensor|Vibration Sensor Attic Doors/i;
+
+// NOTE: Homey class is "light" (singular), not "lights"
+const INCLUDED_DEVICE_CLASS_REGEX = /sensor|button|remote|socket|light|bulb|other|switch/i;
+
+// Technology flags
+const EXCLUDED_FLAGS = [''];         // e.g.: ['zigbee','zwave'] to exclude those stacks
+const EXCLUDE_EMPTY_FLAGS = false;   // true => exclude devices with empty flags
+
+// Label used when there have been no updates (invalid/absent timestamp)
+const NO_UPDATES_LABEL = 'No updates';
+
+// ───────────────────────── internals ────────────────────────────
 let okDevices = [];
 let nokDevices = [];
 
-// Overall tracking
 let DevicesNotReporting = [];
 let notReportingCount = 0;
 
-// Battery tracking
 let DevicesLowBattery = [];
 let lowBatteryCount = 0;
 
-// Fetch all devices and zones
 const devices = await Homey.devices.getDevices();
 const zones = await Homey.zones.getZones();
 const zonesArray = Array.isArray(zones) ? zones : Object.values(zones);
 
-// Create a map of zone ID to zone name
 const zoneMap = {};
-zonesArray.forEach(zone => {
-  zoneMap[zone.id] = zone.name;
-});
+zonesArray.forEach(z => { zoneMap[z.id] = z.name; });
 
 // Function to format date as "dd-mm-yyyy, hh:mm:ss"
 function formatDate(date) {
-  if (!date || isNaN(date.getTime())) return "Unknown";
-  const day = date.getDate().toString().padStart(2, '0');
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const year = date.getFullYear().toString();
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  const seconds = date.getSeconds().toString().padStart(2, '0');
-  return `${day}-${month}-${year}, ${hours}:${minutes}:${seconds}`;
+  if (!date || isNaN(date.getTime())) return NO_UPDATES_LABEL;
+  const d = date;
+  // Use system time zone unless TIME_ZONE is set
+  const opts = {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  };
+  if (TIME_ZONE) opts.timeZone = TIME_ZONE;
+
+  const parts = new Intl.DateTimeFormat('en-GB', opts).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value ?? '';
+  const DD = get('day').padStart(2, '0');
+  const MM = get('month').padStart(2, '0');
+  const YYYY = get('year');
+  const HH = get('hour').padStart(2, '0');
+  const mm = get('minute').padStart(2, '0');
+  const ss = get('second').padStart(2, '0');
+  return `${DD}-${MM}-${YYYY}, ${HH}:${mm}:${ss}`;
 }
 
 // Simple right-padding function for column formatting
@@ -69,16 +80,13 @@ function padRight(str, width) {
   return str + ' '.repeat(width - str.length);
 }
 
-// For each device, apply filters and check lastUpdated times + battery
 for (const device of Object.values(devices)) {
   // 1) Exclude certain driver URIs (virtual devices, app placeholders, etc.)
   if (device.driverUri && EXCLUDED_DRIVER_URI_PATTERN.test(device.driverUri)) continue;
 
   // 2) Zone checks
   const zoneName = device.zone ? zoneMap[device.zone] : null;
-  if (zoneName && EXCLUDED_ZONES.some(z => z.toLowerCase() === zoneName.toLowerCase())) {
-    continue;
-  }
+  if (zoneName && EXCLUDED_ZONES.some(z => z.toLowerCase() === zoneName.toLowerCase())) continue;
 
   // 3) Name/class filters
   if (!device.name || !INCLUDED_DEVICE_NAME_REGEX.test(device.name)) continue;
@@ -88,93 +96,85 @@ for (const device of Object.values(devices)) {
   // 4) Exclude based on technology
   if (
     (device.flags && EXCLUDED_FLAGS.some(flag => device.flags.includes(flag))) ||
-    (EXCLUDE_EMPTY_FLAGS && Array.isArray(device.flags) && (device.flags.length === 0 || device.flags.includes('lowBattery')))
+    (EXCLUDE_EMPTY_FLAGS && Array.isArray(device.flags) && (device.flags.length === 0))
   ) continue;
 
-  // We'll track the most recent (max) lastUpdated across all capabilities
-  let maxLastUpdatedTime = null;
-
-  // Gather the latest lastUpdated across capabilities
+  // Most recent lastUpdated across capabilities
+  let mostRecentTs = NaN;
   if (device.capabilitiesObj) {
-    for (const capability of Object.values(device.capabilitiesObj)) {
-      if (!capability.lastUpdated) continue;
-      const capTime = new Date(capability.lastUpdated).getTime();
-      if (!maxLastUpdatedTime || capTime > maxLastUpdatedTime) {
-        maxLastUpdatedTime = capTime;
-      }
+    for (const cap of Object.values(device.capabilitiesObj)) {
+      const iso = cap?.lastUpdated;
+      if (!iso) continue;
+      const ts = new Date(iso).getTime();
+      if (Number.isNaN(ts)) continue;
+      if (Number.isNaN(mostRecentTs) || ts > mostRecentTs) mostRecentTs = ts;
     }
   }
 
-  // Now decide if the device is reporting or not
+  // Reporting decision
+  const now = Date.now();
   let isReporting = false;
-  if (maxLastUpdatedTime) {
-    const timeSinceLastUpdated = Date.now() - maxLastUpdatedTime;
-    // If the device's lastUpdated is within threshold, it's reporting
-    if (timeSinceLastUpdated < THRESHOLD_IN_MILLIS) {
+  let reason = '';
+
+  if (Number.isNaN(mostRecentTs)) {
+    isReporting = false;
+    reason = 'NOK: no updates';
+  } else {
+    const age = now - mostRecentTs;
+    if (age < THRESHOLD_IN_MILLIS) {
       isReporting = true;
+    } else {
+      isReporting = false;
+      reason = `NOK: threshold ${NOT_REPORTING_THRESHOLD_HOURS}h`;
     }
   }
 
-  // -------- Battery checks (added) --------
+  // -------- Battery checks --------
   let batteryStr = 'N/A';
   let isLowBattery = false;
 
-  // Check both measure_battery (%) and alarm_battery (boolean) when present
   const caps = device.capabilities || [];
   const capsObj = device.capabilitiesObj || {};
 
-  let measuredPct = undefined;
   if (caps.includes('measure_battery')) {
-    const v = capsObj.measure_battery && typeof capsObj.measure_battery.value === 'number'
-      ? capsObj.measure_battery.value
-      : undefined;
+    const v = capsObj.measure_battery?.value;
     if (typeof v === 'number' && !Number.isNaN(v)) {
-      measuredPct = v;
       batteryStr = `${Math.round(v)}%`;
-      if (v <= BATTERY_THRESHOLD_PERCENT) {
-        isLowBattery = true;
-      }
+      if (v <= BATTERY_THRESHOLD_PERCENT) isLowBattery = true;
     }
   }
 
   if (caps.includes('alarm_battery')) {
-    const alarmVal = !!(capsObj.alarm_battery && capsObj.alarm_battery.value === true);
+    const alarmVal = !!(capsObj.alarm_battery?.value === true);
     if (alarmVal && INCLUDE_BATTERY_ALARM_AS_LOW) {
       isLowBattery = true;
-      // If there was no numeric measure, indicate alarm state explicitly
       if (batteryStr === 'N/A') batteryStr = 'ALARM';
-    } else {
-      // If we have neither a % nor an active alarm, at least acknowledge capability
-      if (batteryStr === 'N/A') batteryStr = 'OK';
+    } else if (batteryStr === 'N/A') {
+      batteryStr = 'OK';
     }
   }
 
-  // If determined low-battery, track it
   if (isLowBattery) {
     lowBatteryCount++;
-    const lbDescriptor = (batteryStr !== 'N/A') ? batteryStr : (measuredPct !== undefined ? `${Math.round(measuredPct)}%` : 'LOW');
-    DevicesLowBattery.push(`${device.name} ${lbDescriptor}`);
+    DevicesLowBattery.push(`${device.name} ${batteryStr}`);
   }
 
-  // ----------------------------------------
-
-  // Format the date from the maximum lastUpdated we found
-  const lastUpdatedDate = maxLastUpdatedTime ? new Date(maxLastUpdatedTime) : null;
-  const deviceInfo = {
+  const formatted = Number.isNaN(mostRecentTs) ? NO_UPDATES_LABEL : formatDate(new Date(mostRecentTs));
+  const rowObj = {
     name: device.name,
-    formattedDate: formatDate(lastUpdatedDate),
+    formattedDate: formatted,
     class: device.class,
-    batt: batteryStr,                 // <-- added to printed output
+    batt: batteryStr,
     status: isReporting ? '(OK)' : '(NOK)'
   };
 
-  // If not reporting
   if (!isReporting) {
     notReportingCount++;
-    DevicesNotReporting.push(`${deviceInfo.name} (${deviceInfo.formattedDate} - ${deviceInfo.class}) (NOK)`);
-    nokDevices.push(deviceInfo);
+    const reasonSuffix = reason ? ` - ${reason}` : '';
+    DevicesNotReporting.push(`${rowObj.name} (${rowObj.formattedDate} - ${rowObj.class}) (NOK)${reasonSuffix}`);
+    nokDevices.push(rowObj);
   } else {
-    okDevices.push(deviceInfo);
+    okDevices.push(rowObj);
   }
 }
 

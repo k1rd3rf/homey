@@ -1,4 +1,4 @@
-// Zigbee Last-Seen & Battery Monitor – v0.8
+// Zigbee Last-Seen & Battery Monitor — v0.9
 //   • Checks LastSeen property of every non-excluded Zigbee device
 //   • Flags devices not reporting for more than NotReportingThreshold hours
 //   • Flags devices whose battery level is at/below BatteryThreshold %
@@ -19,13 +19,19 @@ const EXCLUDED_ZONES         = ['Bathroom', 'Main Entry', 'Living Room'];
 // const EXCLUDED_ZONES      = [];            // Uncomment to exclude none
 
 // Device-class / name filters
-const INCLUDED_DEVICE_CLASSES_REGEX = /sensor|button|remote|socket|lights/i;
+const INCLUDED_DEVICE_CLASSES_REGEX = /sensor|button|remote|socket|light|other|switch/i;
 const EXCLUDED_DEVICE_NAME_PATTERN  = /smoke|flood|bulb|spot/i;
 const INCLUDED_DEVICE_NAME_PATTERN  = /.*/i; // e.g. /temperature/i to narrow
 
 // Whether to include these Zigbee node types
 const includeEndDevices = true;
 const includeRouters    = true;
+
+// Optional time zone override (e.g., "Europe/Prague"). Leave null/'' to use system TZ.
+const TIME_ZONE = null;
+
+// Label used when there have been no updates (invalid/absent timestamp)
+const NO_UPDATES_LABEL = 'No updates';
 
 // ------------------------------- derived constants ----------------
 
@@ -43,9 +49,25 @@ let DevicesLowBattery   = [];
 
 // Format Date → "dd-mm-yyyy, hh:mm:ss"
 function formatDate(date) {
-  const pad = (n) => n.toString().padStart(2, '0');
-  return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()}, `
-       + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  if (!date || isNaN(date.getTime())) return NO_UPDATES_LABEL;
+  const d = date;
+  // Use system time zone unless TIME_ZONE is set
+  const opts = {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  };
+  if (TIME_ZONE) opts.timeZone = TIME_ZONE;
+
+  const parts = new Intl.DateTimeFormat('en-GB', opts).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value ?? '';
+  const DD = get('day').padStart(2, '0');
+  const MM = get('month').padStart(2, '0');
+  const YYYY = get('year');
+  const HH = get('hour').padStart(2, '0');
+  const mm = get('minute').padStart(2, '0');
+  const ss = get('second').padStart(2, '0');
+  return `${DD}-${MM}-${YYYY}, ${HH}:${mm}:${ss}`;
 }
 
 // Simple pad-right for console table layout
@@ -102,27 +124,51 @@ async function checkZigbeeLastSeen() {
       }
 
       /* ---------- last-seen check ------------------------------- */
-      const lastSeenDate   = new Date(node.lastSeen);
-      const timeDiffMillis = Date.now() - lastSeenDate.getTime();
-      const dateFormatted  = formatDate(lastSeenDate);
+      const lastSeenDate = node.lastSeen ? new Date(node.lastSeen) : null;
+      const lastSeenTs   = lastSeenDate ? lastSeenDate.getTime() : NaN;
+      const dateFormatted = Number.isNaN(lastSeenTs) ? NO_UPDATES_LABEL : formatDate(lastSeenDate);
 
       let statusMark = '(OK)';
-      if (timeDiffMillis >= thresholdInMillis) {
+      let reason = '';
+
+      if (Number.isNaN(lastSeenTs)) {
         statusMark = '(NOK)';
+        reason = 'no updates';
         notReportingCount++;
-        DevicesNotReporting.push(`${node.name} ${dateFormatted} (${typeLower})`);
+        DevicesNotReporting.push(`${node.name || '(unknown)'} ${dateFormatted} (${typeLower}) - NOK: ${reason}`);
+      } else {
+        const age = Date.now() - lastSeenTs;
+        if (age >= thresholdInMillis) {
+          statusMark = '(NOK)';
+          reason = `threshold ${NotReportingThreshold}h`;
+          notReportingCount++;
+          DevicesNotReporting.push(`${node.name || '(unknown)'} ${dateFormatted} (${typeLower}) - NOK: ${reason}`);
+        }
       }
 
       /* ---------- battery check -------------------------------- */
       let batteryMsg = 'N/A';   // appended to console table if available
       if (homeyDevice?.capabilities?.includes('measure_battery')) {
-        const battVal = homeyDevice.capabilitiesObj.measure_battery.value;
+        const battVal = homeyDevice.capabilitiesObj?.measure_battery?.value;
         if (typeof battVal === 'number') {
           batteryMsg = `${battVal}%`;
           if (battVal <= BatteryThreshold) {
             lowBatteryCount++;
-            DevicesLowBattery.push(`${node.name} ${battVal}%`);
+            DevicesLowBattery.push(`${node.name || '(unknown)'} ${battVal}%`);
           }
+        }
+      }
+      if (homeyDevice?.capabilities?.includes('alarm_battery')) {
+        const alarmVal = !!(homeyDevice.capabilitiesObj?.alarm_battery?.value === true);
+        if (alarmVal) {
+          // treat as low battery (in addition to % check)
+          if (!DevicesLowBattery.some(x => x.startsWith(`${node.name || '(unknown)'} `))) {
+            lowBatteryCount++;
+            DevicesLowBattery.push(`${node.name || '(unknown)'} ALARM`);
+          }
+          if (batteryMsg === 'N/A') batteryMsg = 'ALARM';
+        } else if (batteryMsg === 'N/A') {
+          batteryMsg = 'OK';
         }
       }
 
@@ -134,9 +180,9 @@ async function checkZigbeeLastSeen() {
       const rowObj = {
         name   : node.name || '(unknown)',
         date   : dateFormatted,
-        type   : typeLower,
-        status : statusMark,
-        batt   : batteryMsg
+        type   : typeLower || 'unknown',
+        batt   : batteryMsg,
+        status : statusMark
       };
       (statusMark === '(OK)' ? okRows : nokRows).push(rowObj);
     }
@@ -185,7 +231,7 @@ async function checkZigbeeLastSeen() {
     }
 
     if (lowBatteryCount) {
-      console.log(`\nLow-battery device(s) (≤${BatteryThreshold}%): ${lowBatteryCount}`);
+      console.log(`\nLow-battery device(s) (≤${BatteryThreshold}% or alarm): ${lowBatteryCount}`);
       DevicesLowBattery.forEach((d, i) => console.log(`${i + 1}. ${d}`));
     }
 
@@ -201,9 +247,8 @@ async function checkZigbeeLastSeen() {
     const result =
       `Not Reporting Count: ${notReportingCount}\n` +
       `Low Battery Count:   ${lowBatteryCount}\n` +
-      `Devices Not Reporting:\n${DevicesNotReporting.join('\n')}\n` +
-      `Devices Low Battery:\n${DevicesLowBattery.join('\n')}`;
-
+      `Devices Not Reporting:\n${DevicesNotReporting.join('\n')}` +
+      (DevicesLowBattery.length ? `\nDevices Low Battery:\n${DevicesLowBattery.join('\n')}` : '');
     return result;
 
   } catch (err) {
@@ -211,7 +256,7 @@ async function checkZigbeeLastSeen() {
     await tag('InvalidatedDevices', '');
     await tag('notReportingCount', -1);
     await tag('LowBatteryDevices', '');
-    await tag('lowBatteryCount',   -1);
+    await tag('lowBatteryCount', -1);
     return 'Error while retrieving Zigbee state';
   }
 }
