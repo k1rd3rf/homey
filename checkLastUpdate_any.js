@@ -222,26 +222,22 @@ const formatRows = devArray => sortObjects(devArray).map(rowToText);
 
 
 // Log results in columns
-const totalDevices = okDevices.length + nokDevices.length;
-console.log(`${totalDevices} device(s) scanned.`);
-console.log(`OK:  ${okDevices.length}`);
-console.log(`NOK: ${nokDevices.length}`);
-console.log(`Low Battery (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`);
-console.log(headerTopBottom);
+const summaryText = [
+  `${(reports.length)} device(s) scanned.`,
+  `OK:  ${okDevices.length}`,
+  `NOK: ${nokDevices.length}`,
+  `Low Battery (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`,
+  headerTopBottom,
+];
 
 const okText = [
-  `\nOK device(s): \`${okDevices.length}\``,
+  `\nOK device(s): ${okDevices.length}`,
   headerTopBottom,
   headerLabel,
   headerTopBottom,
   formatRows(okDevices).join('\n'),
   headerTopBottom,
 ];
-
-// Print OK devices
-if (okDevices.length > 0) {
-  console.log(okText.join('\n'));
-}
 
 const nokText = [
   `\nNOK device(s): ${nokDevices.length}`,
@@ -252,11 +248,6 @@ const nokText = [
   headerTopBottom,
 ];
 
-// Print NOK devices
-if (nokDevices.length > 0) {
-  console.log(nokText.join('\n'));
-}
-
 const lowBatteryText = [
   `\nLow-battery device(s) (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`,
   headerTopBottom,
@@ -265,11 +256,10 @@ const lowBatteryText = [
   lowBattDevices.map(rowToText).join('\n'),
 ];
 
-// Print Low Battery devices (summary list)
-if (lowBatteryCount > 0) {
-  console.log(lowBatteryText.join('\n'));
-}
-
+console.log(summaryText.join('\n'));
+if (okDevices.length > 0) console.log(okText.join('\n'));
+if (nokDevices.length > 0) console.log(nokText.join('\n'));
+if (lowBatteryCount > 0) console.log(lowBatteryText.join('\n'));
 console.log(`${headerTopBottom}\n`);
 
 // Output for script AND card
@@ -278,6 +268,12 @@ await tag('notReportingCount', notReportingCount);
 // Added battery tags
 await tag('LowBatteryDevices', DevicesLowBattery.join('\n'));
 await tag('lowBatteryCount', lowBatteryCount);
+
+await tag('summaryText', summaryText.join('\n'));
+await tag('okText', okText.join('\n'));
+await tag('nokText', nokText.join('\n'));
+await tag('lowBatteryText', lowBatteryText.join('\n'));
+
 
 // Define a return value
 const myTag =
