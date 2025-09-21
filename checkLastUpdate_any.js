@@ -14,6 +14,7 @@ const config = {
   batteryThreshold: variables.batteryThreshold ?? 30,
   includeBatteryAlarm: variables.includeBatteryAlarm ?? true,
   separator: variables.separator ?? ' ', // set to e.g. '| ' for more visible separation
+  showReason: !!variables.showReason,
 };
 
 // Optional time zone override (e.g., "Europe/Prague"). Leave null/'' to use system TZ.
@@ -88,6 +89,26 @@ const rowToText = (row, idx) => {
   return ['', ...columns.map(c => padRight(r[c.field], c.width)), ''].join(config.separator);
 };
 
+const getStatus = mostRecentTs => {
+  let isReporting;
+  let reason = '';
+  const now = Date.now();
+
+  if (Number.isNaN(mostRecentTs)) {
+    isReporting = false;
+    reason = 'no updates';
+  } else {
+    const age = now - mostRecentTs;
+    if (age < config.noReportThreshold * 3600000) {
+      isReporting = true;
+    } else {
+      isReporting = false;
+      reason = `threshold > ${(config.noReportThreshold)}h`;
+    }
+  }
+  return {isReporting, reason};
+};
+
 const reports = Object.values(devices).map(device => {
   // 1) Exclude certain driver URIs (virtual devices, app placeholders, etc.)
   if (device.driverUri && EXCLUDED_DRIVER_URI_PATTERN.test(device.driverUri)) return null;
@@ -120,22 +141,7 @@ const reports = Object.values(devices).map(device => {
   }
 
   // Reporting decision
-  const now = Date.now();
-  let isReporting;
-  let reason = '';
-
-  if (Number.isNaN(mostRecentTs)) {
-    isReporting = false;
-    reason = 'NOK: no updates';
-  } else {
-    const age = now - mostRecentTs;
-    if (age < config.noReportThreshold * 3600000) {
-      isReporting = true;
-    } else {
-      isReporting = false;
-      reason = `NOK: threshold ${(config.noReportThreshold)}h`;
-    }
-  }
+  const {isReporting, reason} = getStatus(mostRecentTs);
 
   // -------- Battery checks --------
   let batteryStr = 'N/A';
@@ -200,7 +206,7 @@ const columns = [
   {name: 'Last Updated', width: 21, field: 'formattedDate'},
   {name: 'Class', width: 14, field: 'class'},
   {name: 'Batt', width: 6, field: 'batt'},
-  {name: 'Status', width: 7, field: 'status'},
+  config.showReason ? {name: 'Reason', width: 15, field: 'reason'} : {name: 'Status', width: 7, field: 'status'},
 ]
 
 // Prepare column headers
