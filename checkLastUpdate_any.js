@@ -13,6 +13,7 @@ const config = {
   noReportThreshold: variables.noReportThreshold ?? 0.8,
   batteryThreshold: variables.batteryThreshold ?? 30,
   includeBatteryAlarm: variables.includeBatteryAlarm ?? true,
+  separator: variables.separator ?? ' ', // set to e.g. '| ' for more visible separation
 };
 
 // Optional time zone override (e.g., "Europe/Prague"). Leave null/'' to use system TZ.
@@ -212,19 +213,18 @@ const columns = [
 ]
 
 // Prepare column headers
-const separator = '| ';
-const header = columns.map(c => padRight(c.name, c.width)).join(separator);
+const header = columns.map(c => padRight(c.name, c.width)).join(config.separator);
 
 // Helper to print rows in columns
 function printRows(devArray) {
   sortObjects(devArray).forEach((row, idx) => {
     const r = {...row, id: idx + 1};
-    const l = ['', ...columns.map(c => padRight(r[c.field], c.width)), ''].join(separator);
+    const l = ['', ...columns.map(c => padRight(r[c.field], c.width)), ''].join(config.separator);
     console.log(l);
   });
 }
 
-const headerLabel = ['', header, ''].join(separator);
+const headerLabel = ['', header, ''].join(config.separator);
 const headerTopBottom = '-'.repeat(headerLabel.length - 1);
 
 function printHeaders() {
@@ -270,5 +270,7 @@ const myTag =
   `Low Battery Count:   ${lowBatteryCount}\n` +
   `Devices Not Reporting:\n${DevicesNotReporting.join('\n')}` +
   (DevicesLowBattery.length ? `\nDevices Low Battery:\n${DevicesLowBattery.join('\n')}` : '');
+
+console.log(config);
 
 return myTag;
