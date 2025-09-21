@@ -191,7 +191,7 @@ function sortObjects(devs) {
     if (b.formattedDate === NO_UPDATES_LABEL) return -1;
 
     return a.formattedDate > b.formattedDate ? -1 : (a.formattedDate < b.formattedDate ? 1 : 0);
-  }).reverse();
+  });
 }
 
 // Log results in columns
@@ -270,7 +270,5 @@ const myTag =
   `Low Battery Count:   ${lowBatteryCount}\n` +
   `Devices Not Reporting:\n${DevicesNotReporting.join('\n')}` +
   (DevicesLowBattery.length ? `\nDevices Low Battery:\n${DevicesLowBattery.join('\n')}` : '');
-
-console.log(config);
 
 return myTag;
