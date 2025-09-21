@@ -83,6 +83,11 @@ const deviceNotReportingToText = rowObj => {
   return `${rowObj.name} (${rowObj.formattedDate} - ${rowObj.class}) (NOK)${reason}`;
 };
 
+const rowToText = (row, idx) => {
+  const r = {...row, id: idx + 1};
+  return ['', ...columns.map(c => padRight(r[c.field], c.width)), ''].join(config.separator);
+};
+
 const reports = Object.values(devices).map(device => {
   // 1) Exclude certain driver URIs (virtual devices, app placeholders, etc.)
   if (device.driverUri && EXCLUDED_DRIVER_URI_PATTERN.test(device.driverUri)) return null;
@@ -204,13 +209,7 @@ const headerLabel = ['', header, ''].join(config.separator);
 const headerTopBottom = '-'.repeat(headerLabel.length - 1);
 
 // Helper to print rows in columns
-function printRows(devArray) {
-  sortObjects(devArray).forEach((row, idx) => {
-    const r = {...row, id: idx + 1};
-    const l = ['', ...columns.map(c => padRight(r[c.field], c.width)), ''].join(config.separator);
-    console.log(l);
-  });
-}
+const formatRows = devArray => sortObjects(devArray).map(rowToText);
 
 
 function printHeaders() {
@@ -231,7 +230,7 @@ console.log(headerTopBottom);
 if (okDevices.length > 0) {
   console.log(`\nOK device(s): ${okDevices.length}`);
   printHeaders();
-  printRows(okDevices);
+  console.log(formatRows(okDevices).join('\n'));
   console.log(headerTopBottom);
 }
 
@@ -239,7 +238,7 @@ if (okDevices.length > 0) {
 if (nokDevices.length > 0) {
   console.log(`\nNOK device(s): ${nokDevices.length}`);
   printHeaders();
-  printRows(nokDevices);
+  console.log(formatRows(nokDevices).join('\n'));
   console.log(headerTopBottom);
 }
 
