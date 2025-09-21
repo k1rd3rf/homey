@@ -254,6 +254,7 @@ const lowBatteryText = [
   headerLabel,
   headerTopBottom,
   lowBattDevices.map(rowToText).join('\n'),
+  headerTopBottom,
 ];
 
 console.log(summaryText.join('\n'));
@@ -269,11 +270,10 @@ await tag('notReportingCount', notReportingCount);
 await tag('LowBatteryDevices', DevicesLowBattery.join('\n'));
 await tag('lowBatteryCount', lowBatteryCount);
 
-await tag('summaryText', summaryText.join('\n'));
-await tag('okText', okText.join('\n'));
-await tag('nokText', nokText.join('\n'));
-await tag('lowBatteryText', lowBatteryText.join('\n'));
-
+await tag('LastUpdateSummaryText', summaryText.join('\n'));
+await tag('LastUpdateOkText', okText.join('\n'));
+await tag('LastUpdateNokText', nokText.join('\n'));
+await tag('LastUpdateLowBatteryText', lowBatteryText.join('\n'));
 
 // Define a return value
 const myTag =
