@@ -24,7 +24,7 @@ const EXCLUDED_DEVICE_NAME_PATTERN =
   /Flood|Netatmo Rain|Motion|Flora|Rear gate Vibration Sensor|Vibration Sensor Attic Doors/i;
 
 // NOTE: Homey class is "light" (singular), not "lights"
-const INCLUDED_DEVICE_CLASS_REGEX = /sensor|button|remote|socket|light|bulb|other|switch/i;
+const INCLUDED_DEVICE_CLASS_REGEX = /sensor|button|remote|socket|light|bulb|other|switch|doorbell|speaker|blinds|tv|coffeemachine|vacuumcleaner|thermostat/i;
 
 // Technology flags
 const EXCLUDED_FLAGS = [''];         // e.g.: ['zigbee','zwave'] to exclude those stacks
@@ -202,7 +202,7 @@ const columns = [
   {name: '#', width: 4, field: 'id'},
   {name: 'Device Name', width: 35, field: 'name'},
   {name: 'Last Updated', width: 21, field: 'formattedDate'},
-  {name: 'Class', width: 10, field: 'class'},
+  {name: 'Class', width: 14, field: 'class'},
   {name: 'Batt', width: 6, field: 'batt'},
   {name: 'Status', width: 7, field: 'status'},
 ]
