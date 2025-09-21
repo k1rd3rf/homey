@@ -6,7 +6,7 @@
 
 const vars = await Homey.logic.getVariables();
 const variables = Object.keys(vars).reduce((acc, key) => {
-  return {...acc, [vars[key].name]: vars[key].value };
+  return {...acc, [vars[key].name]: vars[key].value};
 }, {});
 
 const config = {
@@ -45,7 +45,18 @@ const zones = await Homey.zones.getZones();
 const zonesArray = Array.isArray(zones) ? zones : Object.values(zones);
 
 const zoneMap = {};
-zonesArray.forEach(z => { zoneMap[z.id] = z.name; });
+zonesArray.forEach(z => {
+  zoneMap[z.id] = z.name;
+});
+
+const columns = [
+  {name: '#', width: 4, field: 'id'},
+  {name: 'Device Name', width: 35, field: 'name'},
+  {name: 'Last Updated', width: 21, field: 'formattedDate'},
+  {name: 'Class', width: 14, field: 'class'},
+  {name: 'Batt', width: 6, field: 'batt'},
+  config.showReason ? {name: 'Reason', width: 15, field: 'reason'} : {name: 'Status', width: 7, field: 'status'},
+]
 
 // Function to format date as "dd-mm-yyyy, hh:mm:ss"
 const formatDate = date => {
@@ -55,7 +66,7 @@ const formatDate = date => {
   const opts = {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false
+    hour12: false,
   };
   if (TIME_ZONE) opts.timeZone = TIME_ZONE;
 
@@ -197,17 +208,9 @@ const nokDevices = reports.filter(report => !report.isReporting);
 const DevicesNotReporting = nokDevices.map(deviceNotReportingToText);
 const notReportingCount = DevicesNotReporting.length;
 
-const DevicesLowBattery = reports.filter(report => report.isLowBattery).map(deviceLowBatteryToText);
+const lowBattDevices = reports.filter(report => report.isLowBattery);
+const DevicesLowBattery = lowBattDevices.map(deviceLowBatteryToText);
 const lowBatteryCount = DevicesLowBattery.length;
-
-const columns = [
-  {name: '#', width: 4, field: 'id'},
-  {name: 'Device Name', width: 35, field: 'name'},
-  {name: 'Last Updated', width: 21, field: 'formattedDate'},
-  {name: 'Class', width: 14, field: 'class'},
-  {name: 'Batt', width: 6, field: 'batt'},
-  config.showReason ? {name: 'Reason', width: 15, field: 'reason'} : {name: 'Status', width: 7, field: 'status'},
-]
 
 // Prepare column headers
 const header = columns.map(c => padRight(c.name, c.width)).join(config.separator);
@@ -218,12 +221,6 @@ const headerTopBottom = '-'.repeat(headerLabel.length - 1);
 const formatRows = devArray => sortObjects(devArray).map(rowToText);
 
 
-function printHeaders() {
-  console.log(headerTopBottom);
-  console.log(headerLabel);
-  console.log(headerTopBottom);
-}
-
 // Log results in columns
 const totalDevices = okDevices.length + nokDevices.length;
 console.log(`${totalDevices} device(s) scanned.`);
@@ -232,26 +229,45 @@ console.log(`NOK: ${nokDevices.length}`);
 console.log(`Low Battery (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`);
 console.log(headerTopBottom);
 
+const okText = [
+  `\nOK device(s): \`${okDevices.length}\``,
+  headerTopBottom,
+  headerLabel,
+  headerTopBottom,
+  formatRows(okDevices).join('\n'),
+  headerTopBottom,
+];
+
 // Print OK devices
 if (okDevices.length > 0) {
-  console.log(`\nOK device(s): ${okDevices.length}`);
-  printHeaders();
-  console.log(formatRows(okDevices).join('\n'));
-  console.log(headerTopBottom);
+  console.log(okText.join('\n'));
 }
+
+const nokText = [
+  `\nNOK device(s): ${nokDevices.length}`,
+  headerTopBottom,
+  headerLabel,
+  headerTopBottom,
+  formatRows(nokDevices).join('\n'),
+  headerTopBottom,
+];
 
 // Print NOK devices
 if (nokDevices.length > 0) {
-  console.log(`\nNOK device(s): ${nokDevices.length}`);
-  printHeaders();
-  console.log(formatRows(nokDevices).join('\n'));
-  console.log(headerTopBottom);
+  console.log(nokText.join('\n'));
 }
+
+const lowBatteryText = [
+  `\nLow-battery device(s) (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`,
+  headerTopBottom,
+  headerLabel,
+  headerTopBottom,
+  lowBattDevices.map(rowToText).join('\n'),
+];
 
 // Print Low Battery devices (summary list)
 if (lowBatteryCount > 0) {
-  console.log(`\nLow-battery device(s) (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`);
-  DevicesLowBattery.forEach((d, i) => console.log(`${i + 1}. ${d}`));
+  console.log(lowBatteryText.join('\n'));
 }
 
 console.log(`${headerTopBottom}\n`);
