@@ -70,7 +70,7 @@ function formatDate(date) {
   const HH = get('hour').padStart(2, '0');
   const mm = get('minute').padStart(2, '0');
   const ss = get('second').padStart(2, '0');
-  return `${DD}-${MM}-${YYYY}, ${HH}:${mm}:${ss}`;
+  return `${YYYY}-${MM}-${DD}, ${HH}:${mm}:${ss}`;
 }
 
 // Simple right-padding function for column formatting
@@ -159,13 +159,15 @@ for (const device of Object.values(devices)) {
     DevicesLowBattery.push(`${device.name} ${batteryStr}`);
   }
 
-  const formatted = Number.isNaN(mostRecentTs) ? NO_UPDATES_LABEL : formatDate(new Date(mostRecentTs));
+  const date = new Date(mostRecentTs);
+  const formatted = Number.isNaN(mostRecentTs) ? NO_UPDATES_LABEL : formatDate(date);
   const rowObj = {
     name: device.name,
     formattedDate: formatted,
     class: device.class,
     batt: batteryStr,
-    status: isReporting ? '(OK)' : '(NOK)'
+    status: isReporting ? '(OK)' : '(NOK)',
+    date,
   };
 
   if (!isReporting) {
@@ -178,6 +180,15 @@ for (const device of Object.values(devices)) {
   }
 }
 
+function sortObjects(devs) {
+  return devs.sort(function (a, b) {
+    if (a.formattedDate === NO_UPDATES_LABEL) return 1;
+    if (b.formattedDate === NO_UPDATES_LABEL) return -1;
+
+    return a.formattedDate > b.formattedDate ? -1 : (a.formattedDate < b.formattedDate ? 1 : 0);
+  }).reverse();
+}
+
 // Log results in columns
 const totalDevices = okDevices.length + nokDevices.length;
 console.log(`${totalDevices} device(s) scanned.`);
@@ -186,45 +197,52 @@ console.log(`NOK: ${nokDevices.length}`);
 console.log(`Low Battery (≤${BATTERY_THRESHOLD_PERCENT}%${INCLUDE_BATTERY_ALARM_AS_LOW ? ' or alarm' : ''}): ${lowBatteryCount}`);
 console.log('---------------------------------------------');
 
+
+const columns = [
+  {name: '#', width: 4, field: 'id'},
+  {name: 'Device Name', width: 35, field: 'name'},
+  {name: 'Last Updated', width: 21, field: 'formattedDate'},
+  {name: 'Class', width: 10, field: 'class'},
+  {name: 'Batt', width: 6, field: 'batt'},
+  {name: 'Status', width: 7, field: 'status'},
+]
+
 // Prepare column headers
-const header = [
-  padRight('#', 4),
-  padRight('Device Name', 35),
-  padRight('Last Updated', 20),
-  padRight('Class', 10),
-  padRight('Batt', 6),
-  padRight('Status', 6)
-].join(' ');
+const separator = '| ';
+const header = columns.map(c => padRight(c.name, c.width)).join(separator);
 
 // Helper to print rows in columns
 function printRows(devArray) {
-  devArray.forEach((row, idx) => {
-    const line = [
-      padRight(String(idx + 1), 4),
-      padRight(row.name, 35),
-      padRight(row.formattedDate, 20),
-      padRight(row.class, 10),
-      padRight(row.batt, 6),
-      padRight(row.status, 6)
-    ].join(' ');
-    console.log(line);
+  sortObjects(devArray).forEach((row, idx) => {
+    const r = {...row, id: idx + 1};
+    const l = ['', ...columns.map(c => padRight(r[c.field], c.width)), ''].join(separator);
+    console.log(l);
   });
+}
+
+const headerLabel = ['', header, ''].join(separator);
+const headerTopBottom = '-'.repeat(headerLabel.length - 1);
+
+function printHeaders() {
+  console.log(headerTopBottom);
+  console.log(headerLabel);
+  console.log(headerTopBottom);
 }
 
 // Print OK devices
 if (okDevices.length > 0) {
   console.log(`\nOK device(s): ${okDevices.length}`);
-  console.log(header);
-  console.log('-'.repeat(header.length));
+  printHeaders();
   printRows(okDevices);
+  console.log(headerTopBottom);
 }
 
 // Print NOK devices
 if (nokDevices.length > 0) {
   console.log(`\nNOK device(s): ${nokDevices.length}`);
-  console.log(header);
-  console.log('-'.repeat(header.length));
+  printHeaders();
   printRows(nokDevices);
+  console.log(headerTopBottom);
 }
 
 // Print Low Battery devices (summary list)
@@ -248,4 +266,6 @@ const myTag =
   `Low Battery Count:   ${lowBatteryCount}\n` +
   `Devices Not Reporting:\n${DevicesNotReporting.join('\n')}` +
   (DevicesLowBattery.length ? `\nDevices Low Battery:\n${DevicesLowBattery.join('\n')}` : '');
+
+// noinspection JSAnnotator
 return myTag;
