@@ -4,12 +4,16 @@
 // - Battery: measure_battery (<= threshold) and/or alarm_battery=true
 // - Tags: InvalidatedDevices, notReportingCount, LowBatteryDevices, lowBatteryCount
 
-// ───────────────────────── configurable ─────────────────────────
-const NOT_REPORTING_THRESHOLD_HOURS = 0.8; // 48 minutes
-const THRESHOLD_IN_MILLIS = NOT_REPORTING_THRESHOLD_HOURS * 3600000;
+const vars = await Homey.logic.getVariables();
+const variables = Object.keys(vars).reduce((acc, key) => {
+  return {...acc, [vars[key].name]: vars[key].value };
+}, {});
 
-const BATTERY_THRESHOLD_PERCENT = 30;
-const INCLUDE_BATTERY_ALARM_AS_LOW = true;
+const config = {
+  noReportThreshold: variables.noReportThreshold ?? 0.8,
+  batteryThreshold: variables.batteryThreshold ?? 30,
+  includeBatteryAlarm: variables.includeBatteryAlarm ?? true,
+};
 
 // Optional time zone override (e.g., "Europe/Prague"). Leave null/'' to use system TZ.
 const TIME_ZONE = null;
@@ -121,11 +125,11 @@ for (const device of Object.values(devices)) {
     reason = 'NOK: no updates';
   } else {
     const age = now - mostRecentTs;
-    if (age < THRESHOLD_IN_MILLIS) {
+    if (age < config.noReportThreshold * 3600000) {
       isReporting = true;
     } else {
       isReporting = false;
-      reason = `NOK: threshold ${NOT_REPORTING_THRESHOLD_HOURS}h`;
+      reason = `NOK: threshold ${(config.noReportThreshold)}h`;
     }
   }
 
@@ -140,13 +144,13 @@ for (const device of Object.values(devices)) {
     const v = capsObj.measure_battery?.value;
     if (typeof v === 'number' && !Number.isNaN(v)) {
       batteryStr = `${Math.round(v)}%`;
-      if (v <= BATTERY_THRESHOLD_PERCENT) isLowBattery = true;
+      if (v <= config.batteryThreshold) isLowBattery = true;
     }
   }
 
   if (caps.includes('alarm_battery')) {
     const alarmVal = !!(capsObj.alarm_battery?.value === true);
-    if (alarmVal && INCLUDE_BATTERY_ALARM_AS_LOW) {
+    if (alarmVal && config.includeBatteryAlarm) {
       isLowBattery = true;
       if (batteryStr === 'N/A') batteryStr = 'ALARM';
     } else if (batteryStr === 'N/A') {
@@ -194,7 +198,7 @@ const totalDevices = okDevices.length + nokDevices.length;
 console.log(`${totalDevices} device(s) scanned.`);
 console.log(`OK:  ${okDevices.length}`);
 console.log(`NOK: ${nokDevices.length}`);
-console.log(`Low Battery (≤${BATTERY_THRESHOLD_PERCENT}%${INCLUDE_BATTERY_ALARM_AS_LOW ? ' or alarm' : ''}): ${lowBatteryCount}`);
+console.log(`Low Battery (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`);
 console.log('---------------------------------------------');
 
 
@@ -247,7 +251,7 @@ if (nokDevices.length > 0) {
 
 // Print Low Battery devices (summary list)
 if (lowBatteryCount > 0) {
-  console.log(`\nLow-battery device(s) (≤${BATTERY_THRESHOLD_PERCENT}%${INCLUDE_BATTERY_ALARM_AS_LOW ? ' or alarm' : ''}): ${lowBatteryCount}`);
+  console.log(`\nLow-battery device(s) (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`);
   DevicesLowBattery.forEach((d, i) => console.log(`${i + 1}. ${d}`));
 }
 
