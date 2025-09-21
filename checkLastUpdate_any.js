@@ -39,15 +39,6 @@ const EXCLUDE_EMPTY_FLAGS = false;   // true => exclude devices with empty flags
 const NO_UPDATES_LABEL = 'No updates';
 
 // ───────────────────────── internals ────────────────────────────
-let okDevices = [];
-let nokDevices = [];
-
-let DevicesNotReporting = [];
-let notReportingCount = 0;
-
-let DevicesLowBattery = [];
-let lowBatteryCount = 0;
-
 const devices = await Homey.devices.getDevices();
 const zones = await Homey.zones.getZones();
 const zonesArray = Array.isArray(zones) ? zones : Object.values(zones);
@@ -56,7 +47,7 @@ const zoneMap = {};
 zonesArray.forEach(z => { zoneMap[z.id] = z.name; });
 
 // Function to format date as "dd-mm-yyyy, hh:mm:ss"
-function formatDate(date) {
+const formatDate = date => {
   if (!date || isNaN(date.getTime())) return NO_UPDATES_LABEL;
   const d = date;
   // Use system time zone unless TIME_ZONE is set
@@ -76,33 +67,40 @@ function formatDate(date) {
   const mm = get('minute').padStart(2, '0');
   const ss = get('second').padStart(2, '0');
   return `${YYYY}-${MM}-${DD}, ${HH}:${mm}:${ss}`;
-}
+};
 
 // Simple right-padding function for column formatting
-function padRight(str, width) {
+const padRight = (str, width) => {
   str = String(str);
   if (str.length >= width) return str.slice(0, width);
   return str + ' '.repeat(width - str.length);
-}
+};
 
-for (const device of Object.values(devices)) {
+const deviceLowBatteryToText = device => `${device.name} ${device.batt}`;
+
+const deviceNotReportingToText = rowObj => {
+  const reason = rowObj.reason ? ` - ${rowObj.reason}` : '';
+  return `${rowObj.name} (${rowObj.formattedDate} - ${rowObj.class}) (NOK)${reason}`;
+};
+
+const reports = Object.values(devices).map(device => {
   // 1) Exclude certain driver URIs (virtual devices, app placeholders, etc.)
-  if (device.driverUri && EXCLUDED_DRIVER_URI_PATTERN.test(device.driverUri)) continue;
+  if (device.driverUri && EXCLUDED_DRIVER_URI_PATTERN.test(device.driverUri)) return null;
 
   // 2) Zone checks
   const zoneName = device.zone ? zoneMap[device.zone] : null;
-  if (zoneName && EXCLUDED_ZONES.some(z => z.toLowerCase() === zoneName.toLowerCase())) continue;
+  if (zoneName && EXCLUDED_ZONES.some(z => z.toLowerCase() === zoneName.toLowerCase())) return null;
 
   // 3) Name/class filters
-  if (!device.name || !INCLUDED_DEVICE_NAME_REGEX.test(device.name)) continue;
-  if (EXCLUDED_DEVICE_NAME_PATTERN.test(device.name)) continue;
-  if (!device.class || !INCLUDED_DEVICE_CLASS_REGEX.test(device.class)) continue;
+  if (!device.name || !INCLUDED_DEVICE_NAME_REGEX.test(device.name)) return null;
+  if (EXCLUDED_DEVICE_NAME_PATTERN.test(device.name)) return null;
+  if (!device.class || !INCLUDED_DEVICE_CLASS_REGEX.test(device.class)) return null;
 
   // 4) Exclude based on technology
   if (
     (device.flags && EXCLUDED_FLAGS.some(flag => device.flags.includes(flag))) ||
     (EXCLUDE_EMPTY_FLAGS && Array.isArray(device.flags) && (device.flags.length === 0))
-  ) continue;
+  ) return null;
 
   // Most recent lastUpdated across capabilities
   let mostRecentTs = NaN;
@@ -118,7 +116,7 @@ for (const device of Object.values(devices)) {
 
   // Reporting decision
   const now = Date.now();
-  let isReporting = false;
+  let isReporting;
   let reason = '';
 
   if (Number.isNaN(mostRecentTs)) {
@@ -159,49 +157,37 @@ for (const device of Object.values(devices)) {
     }
   }
 
-  if (isLowBattery) {
-    lowBatteryCount++;
-    DevicesLowBattery.push(`${device.name} ${batteryStr}`);
-  }
-
   const date = new Date(mostRecentTs);
   const formatted = Number.isNaN(mostRecentTs) ? NO_UPDATES_LABEL : formatDate(date);
-  const rowObj = {
+
+  return {
     name: device.name,
     formattedDate: formatted,
     class: device.class,
     batt: batteryStr,
     status: isReporting ? '(OK)' : '(NOK)',
     date,
+    reason,
+    isLowBattery,
+    isReporting,
   };
+}).filter((rowObj) => !!rowObj);
 
-  if (!isReporting) {
-    notReportingCount++;
-    const reasonSuffix = reason ? ` - ${reason}` : '';
-    DevicesNotReporting.push(`${rowObj.name} (${rowObj.formattedDate} - ${rowObj.class}) (NOK)${reasonSuffix}`);
-    nokDevices.push(rowObj);
-  } else {
-    okDevices.push(rowObj);
-  }
-}
+const sortObjects = devs => devs.sort(function (a, b) {
+  if (a.formattedDate === NO_UPDATES_LABEL) return 1;
+  if (b.formattedDate === NO_UPDATES_LABEL) return -1;
 
-function sortObjects(devs) {
-  return devs.sort(function (a, b) {
-    if (a.formattedDate === NO_UPDATES_LABEL) return 1;
-    if (b.formattedDate === NO_UPDATES_LABEL) return -1;
+  return a.formattedDate > b.formattedDate ? -1 : (a.formattedDate < b.formattedDate ? 1 : 0);
+});
 
-    return a.formattedDate > b.formattedDate ? -1 : (a.formattedDate < b.formattedDate ? 1 : 0);
-  });
-}
+const okDevices = reports.filter(report => report.isReporting);
+const nokDevices = reports.filter(report => !report.isReporting);
 
-// Log results in columns
-const totalDevices = okDevices.length + nokDevices.length;
-console.log(`${totalDevices} device(s) scanned.`);
-console.log(`OK:  ${okDevices.length}`);
-console.log(`NOK: ${nokDevices.length}`);
-console.log(`Low Battery (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`);
-console.log('---------------------------------------------');
+const DevicesNotReporting = nokDevices.map(deviceNotReportingToText);
+const notReportingCount = DevicesNotReporting.length;
 
+const DevicesLowBattery = reports.filter(report => report.isLowBattery).map(deviceLowBatteryToText);
+const lowBatteryCount = DevicesLowBattery.length;
 
 const columns = [
   {name: '#', width: 4, field: 'id'},
@@ -214,6 +200,8 @@ const columns = [
 
 // Prepare column headers
 const header = columns.map(c => padRight(c.name, c.width)).join(config.separator);
+const headerLabel = ['', header, ''].join(config.separator);
+const headerTopBottom = '-'.repeat(headerLabel.length - 1);
 
 // Helper to print rows in columns
 function printRows(devArray) {
@@ -224,14 +212,20 @@ function printRows(devArray) {
   });
 }
 
-const headerLabel = ['', header, ''].join(config.separator);
-const headerTopBottom = '-'.repeat(headerLabel.length - 1);
 
 function printHeaders() {
   console.log(headerTopBottom);
   console.log(headerLabel);
   console.log(headerTopBottom);
 }
+
+// Log results in columns
+const totalDevices = okDevices.length + nokDevices.length;
+console.log(`${totalDevices} device(s) scanned.`);
+console.log(`OK:  ${okDevices.length}`);
+console.log(`NOK: ${nokDevices.length}`);
+console.log(`Low Battery (≤${(config.batteryThreshold)}%${config.includeBatteryAlarm ? ' or alarm' : ''}): ${lowBatteryCount}`);
+console.log(headerTopBottom);
 
 // Print OK devices
 if (okDevices.length > 0) {
@@ -255,7 +249,7 @@ if (lowBatteryCount > 0) {
   DevicesLowBattery.forEach((d, i) => console.log(`${i + 1}. ${d}`));
 }
 
-console.log('---------------------------------------------\n');
+console.log(`${headerTopBottom}\n`);
 
 // Output for script AND card
 await tag('InvalidatedDevices', DevicesNotReporting.join('\n'));
