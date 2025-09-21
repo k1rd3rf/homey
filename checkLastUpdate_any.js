@@ -267,5 +267,4 @@ const myTag =
   `Devices Not Reporting:\n${DevicesNotReporting.join('\n')}` +
   (DevicesLowBattery.length ? `\nDevices Low Battery:\n${DevicesLowBattery.join('\n')}` : '');
 
-// noinspection JSAnnotator
 return myTag;
